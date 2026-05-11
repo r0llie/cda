@@ -40,83 +40,123 @@ struct Config {
         }                                                                                        \
     } while (0)
 
-__device__ __forceinline__ uint64_t rotl64(uint64_t x, int n) {
-    return (x << n) | (x >> (64 - n));
-}
-
 __device__ __forceinline__ uint32_t bswap32d(uint32_t x) {
     return __byte_perm(x, 0, 0x0123);
 }
 
-__device__ __forceinline__ uint64_t bswap64d(uint64_t x) {
-    return (uint64_t)bswap32d((uint32_t)(x >> 32)) | ((uint64_t)bswap32d((uint32_t)x) << 32);
-}
-
-__device__ __constant__ uint64_t KECCAK_RC[24] = {
-    0x0000000000000001ULL, 0x0000000000008082ULL, 0x800000000000808aULL,
-    0x8000000080008000ULL, 0x000000000000808bULL, 0x0000000080000001ULL,
-    0x8000000080008081ULL, 0x8000000000008009ULL, 0x000000000000008aULL,
-    0x0000000000000088ULL, 0x0000000080008009ULL, 0x000000008000000aULL,
-    0x000000008000808bULL, 0x800000000000008bULL, 0x8000000000008089ULL,
-    0x8000000000008003ULL, 0x8000000000008002ULL, 0x8000000000000080ULL,
-    0x000000000000800aULL, 0x800000008000000aULL, 0x8000000080008081ULL,
-    0x8000000000008080ULL, 0x0000000080000001ULL, 0x8000000080008008ULL,
+struct U64x {
+    uint32_t lo;
+    uint32_t hi;
 };
 
-__device__ __forceinline__ uint64_t load_le64(const uint8_t* p) {
-    uint64_t v = 0;
-    for (int i = 0; i < 8; i++) v |= ((uint64_t)p[i]) << (8 * i);
+__device__ __constant__ U64x KECCAK_RC[24] = {
+    {0x00000001u, 0x00000000u}, {0x00008082u, 0x00000000u}, {0x0000808au, 0x80000000u},
+    {0x80008000u, 0x80000000u}, {0x0000808bu, 0x00000000u}, {0x80000001u, 0x00000000u},
+    {0x80008081u, 0x80000000u}, {0x00008009u, 0x80000000u}, {0x0000008au, 0x00000000u},
+    {0x00000088u, 0x00000000u}, {0x80008009u, 0x00000000u}, {0x8000000au, 0x00000000u},
+    {0x8000808bu, 0x00000000u}, {0x0000008bu, 0x80000000u}, {0x00008089u, 0x80000000u},
+    {0x00008003u, 0x80000000u}, {0x00008002u, 0x80000000u}, {0x00000080u, 0x80000000u},
+    {0x0000800au, 0x00000000u}, {0x8000000au, 0x80000000u}, {0x80008081u, 0x80000000u},
+    {0x00008080u, 0x80000000u}, {0x80000001u, 0x00000000u}, {0x80008008u, 0x80000000u},
+};
+
+__device__ __forceinline__ U64x make_u64(uint32_t lo, uint32_t hi) {
+    U64x v{lo, hi};
     return v;
 }
 
-__device__ void keccak_f1600(uint64_t s[25]) {
+__device__ __forceinline__ U64x xor64(U64x a, U64x b) {
+    return make_u64(a.lo ^ b.lo, a.hi ^ b.hi);
+}
+
+__device__ __forceinline__ U64x andnot64(U64x a, U64x b) {
+    return make_u64((~a.lo) & b.lo, (~a.hi) & b.hi);
+}
+
+__device__ __forceinline__ U64x rotl64(U64x v, uint32_t n) {
+    n &= 63u;
+    if (n == 0u) return v;
+    if (n == 32u) return make_u64(v.hi, v.lo);
+    if (n < 32u) {
+        uint32_t m = 32u - n;
+        return make_u64((v.lo << n) | (v.hi >> m), (v.hi << n) | (v.lo >> m));
+    }
+    uint32_t s = n - 32u;
+    uint32_t m = 32u - s;
+    return make_u64((v.hi << s) | (v.lo >> m), (v.lo << s) | (v.hi >> m));
+}
+
+__device__ __forceinline__ uint32_t load_le32(const uint8_t* p) {
+    return ((uint32_t)p[0]) | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+
+__device__ void keccak_f1600(U64x s[25]) {
     for (int r = 0; r < 24; r++) {
-        uint64_t C[5], D[5], B[25];
-        for (int x = 0; x < 5; x++) {
-            C[x] = s[x] ^ s[x + 5] ^ s[x + 10] ^ s[x + 15] ^ s[x + 20];
-        }
-        for (int x = 0; x < 5; x++) {
-            D[x] = C[(x + 4) % 5] ^ rotl64(C[(x + 1) % 5], 1);
-        }
-        for (int y = 0; y < 5; y++) {
-            for (int x = 0; x < 5; x++) {
-                s[x + 5 * y] ^= D[x];
-            }
-        }
+        U64x C0 = xor64(xor64(xor64(xor64(s[0], s[5]), s[10]), s[15]), s[20]);
+        U64x C1 = xor64(xor64(xor64(xor64(s[1], s[6]), s[11]), s[16]), s[21]);
+        U64x C2 = xor64(xor64(xor64(xor64(s[2], s[7]), s[12]), s[17]), s[22]);
+        U64x C3 = xor64(xor64(xor64(xor64(s[3], s[8]), s[13]), s[18]), s[23]);
+        U64x C4 = xor64(xor64(xor64(xor64(s[4], s[9]), s[14]), s[19]), s[24]);
 
-        B[0]  = s[0];
-        B[10] = rotl64(s[1], 1);
-        B[20] = rotl64(s[2], 62);
-        B[5]  = rotl64(s[3], 28);
-        B[15] = rotl64(s[4], 27);
-        B[16] = rotl64(s[5], 36);
-        B[1]  = rotl64(s[6], 44);
-        B[11] = rotl64(s[7], 6);
-        B[21] = rotl64(s[8], 55);
-        B[6]  = rotl64(s[9], 20);
-        B[7]  = rotl64(s[10], 3);
-        B[17] = rotl64(s[11], 10);
-        B[2]  = rotl64(s[12], 43);
-        B[12] = rotl64(s[13], 25);
-        B[22] = rotl64(s[14], 39);
-        B[23] = rotl64(s[15], 41);
-        B[8]  = rotl64(s[16], 45);
-        B[18] = rotl64(s[17], 15);
-        B[3]  = rotl64(s[18], 21);
-        B[13] = rotl64(s[19], 8);
-        B[14] = rotl64(s[20], 18);
-        B[24] = rotl64(s[21], 2);
-        B[9]  = rotl64(s[22], 61);
-        B[19] = rotl64(s[23], 56);
-        B[4]  = rotl64(s[24], 14);
+        U64x D0 = xor64(C4, rotl64(C1, 1));
+        U64x D1 = xor64(C0, rotl64(C2, 1));
+        U64x D2 = xor64(C1, rotl64(C3, 1));
+        U64x D3 = xor64(C2, rotl64(C4, 1));
+        U64x D4 = xor64(C3, rotl64(C0, 1));
 
-        for (int y = 0; y < 5; y++) {
-            int o = 5 * y;
-            for (int x = 0; x < 5; x++) {
-                s[o + x] = B[o + x] ^ ((~B[o + ((x + 1) % 5)]) & B[o + ((x + 2) % 5)]);
-            }
-        }
-        s[0] ^= KECCAK_RC[r];
+        U64x b00 = xor64(s[0], D0);
+        U64x b10 = rotl64(xor64(s[1], D1), 1);
+        U64x b20 = rotl64(xor64(s[2], D2), 62);
+        U64x b05 = rotl64(xor64(s[3], D3), 28);
+        U64x b15 = rotl64(xor64(s[4], D4), 27);
+        U64x b16 = rotl64(xor64(s[5], D0), 36);
+        U64x b01 = rotl64(xor64(s[6], D1), 44);
+        U64x b11 = rotl64(xor64(s[7], D2), 6);
+        U64x b21 = rotl64(xor64(s[8], D3), 55);
+        U64x b06 = rotl64(xor64(s[9], D4), 20);
+        U64x b07 = rotl64(xor64(s[10], D0), 3);
+        U64x b17 = rotl64(xor64(s[11], D1), 10);
+        U64x b02 = rotl64(xor64(s[12], D2), 43);
+        U64x b12 = rotl64(xor64(s[13], D3), 25);
+        U64x b22 = rotl64(xor64(s[14], D4), 39);
+        U64x b23 = rotl64(xor64(s[15], D0), 41);
+        U64x b08 = rotl64(xor64(s[16], D1), 45);
+        U64x b18 = rotl64(xor64(s[17], D2), 15);
+        U64x b03 = rotl64(xor64(s[18], D3), 21);
+        U64x b13 = rotl64(xor64(s[19], D4), 8);
+        U64x b14 = rotl64(xor64(s[20], D0), 18);
+        U64x b24 = rotl64(xor64(s[21], D1), 2);
+        U64x b09 = rotl64(xor64(s[22], D2), 61);
+        U64x b19 = rotl64(xor64(s[23], D3), 56);
+        U64x b04 = rotl64(xor64(s[24], D4), 14);
+
+        s[0] = xor64(b00, andnot64(b01, b02));
+        s[1] = xor64(b01, andnot64(b02, b03));
+        s[2] = xor64(b02, andnot64(b03, b04));
+        s[3] = xor64(b03, andnot64(b04, b00));
+        s[4] = xor64(b04, andnot64(b00, b01));
+        s[5] = xor64(b05, andnot64(b06, b07));
+        s[6] = xor64(b06, andnot64(b07, b08));
+        s[7] = xor64(b07, andnot64(b08, b09));
+        s[8] = xor64(b08, andnot64(b09, b05));
+        s[9] = xor64(b09, andnot64(b05, b06));
+        s[10] = xor64(b10, andnot64(b11, b12));
+        s[11] = xor64(b11, andnot64(b12, b13));
+        s[12] = xor64(b12, andnot64(b13, b14));
+        s[13] = xor64(b13, andnot64(b14, b10));
+        s[14] = xor64(b14, andnot64(b10, b11));
+        s[15] = xor64(b15, andnot64(b16, b17));
+        s[16] = xor64(b16, andnot64(b17, b18));
+        s[17] = xor64(b17, andnot64(b18, b19));
+        s[18] = xor64(b18, andnot64(b19, b15));
+        s[19] = xor64(b19, andnot64(b15, b16));
+        s[20] = xor64(b20, andnot64(b21, b22));
+        s[21] = xor64(b21, andnot64(b22, b23));
+        s[22] = xor64(b22, andnot64(b23, b24));
+        s[23] = xor64(b23, andnot64(b24, b20));
+        s[24] = xor64(b24, andnot64(b20, b21));
+
+        s[0] = xor64(s[0], KECCAK_RC[r]);
     }
 }
 
@@ -140,28 +180,28 @@ __global__ void mine_kernel(
 
     #pragma unroll 1
     for (uint32_t k = 0; k < iters; k++, nonce++) {
-        uint64_t s[25];
+        U64x s[25];
         for (int i = 0; i < 25; i++) s[i] = 0;
 
-        s[0] = load_le64(challenge + 0);
-        s[1] = load_le64(challenge + 8);
-        s[2] = load_le64(challenge + 16);
-        s[3] = load_le64(challenge + 24);
-        s[7] = bswap64d(nonce);
-        s[8] = 0x0000000000000001ULL;
-        s[16] = 0x8000000000000000ULL;
+        s[0] = make_u64(load_le32(challenge + 0), load_le32(challenge + 4));
+        s[1] = make_u64(load_le32(challenge + 8), load_le32(challenge + 12));
+        s[2] = make_u64(load_le32(challenge + 16), load_le32(challenge + 20));
+        s[3] = make_u64(load_le32(challenge + 24), load_le32(challenge + 28));
+        s[7] = make_u64(bswap32d((uint32_t)(nonce >> 32)), bswap32d((uint32_t)nonce));
+        s[8] = make_u64(0x00000001u, 0x00000000u);
+        s[16] = make_u64(0x00000000u, 0x80000000u);
 
         keccak_f1600(s);
 
         uint32_t h[8];
-        h[0] = bswap32d((uint32_t)s[0]);
-        h[1] = bswap32d((uint32_t)(s[0] >> 32));
-        h[2] = bswap32d((uint32_t)s[1]);
-        h[3] = bswap32d((uint32_t)(s[1] >> 32));
-        h[4] = bswap32d((uint32_t)s[2]);
-        h[5] = bswap32d((uint32_t)(s[2] >> 32));
-        h[6] = bswap32d((uint32_t)s[3]);
-        h[7] = bswap32d((uint32_t)(s[3] >> 32));
+        h[0] = bswap32d(s[0].lo);
+        h[1] = bswap32d(s[0].hi);
+        h[2] = bswap32d(s[1].lo);
+        h[3] = bswap32d(s[1].hi);
+        h[4] = bswap32d(s[2].lo);
+        h[5] = bswap32d(s[2].hi);
+        h[6] = bswap32d(s[3].lo);
+        h[7] = bswap32d(s[3].hi);
 
         if (below_difficulty(h, difficulty)) {
             if (atomicCAS(&result->found, 0u, 1u) == 0u) {
