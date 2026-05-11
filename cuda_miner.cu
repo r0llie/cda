@@ -140,8 +140,6 @@ __global__ void mine_kernel(
 
     #pragma unroll 1
     for (uint32_t k = 0; k < iters; k++, nonce++) {
-        if (result->found) return;
-
         uint64_t s[25];
         for (int i = 0; i < 25; i++) s[i] = 0;
 
