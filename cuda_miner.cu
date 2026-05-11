@@ -65,26 +65,20 @@ __device__ __constant__ uint64_t KECCAK_RC[24] = {
 
 __device__ __forceinline__ uint64_t load_le64(const uint8_t* p) {
     uint64_t v = 0;
-    #pragma unroll
     for (int i = 0; i < 8; i++) v |= ((uint64_t)p[i]) << (8 * i);
     return v;
 }
 
 __device__ void keccak_f1600(uint64_t s[25]) {
-    #pragma unroll 24
     for (int r = 0; r < 24; r++) {
         uint64_t C[5], D[5], B[25];
-        #pragma unroll
         for (int x = 0; x < 5; x++) {
             C[x] = s[x] ^ s[x + 5] ^ s[x + 10] ^ s[x + 15] ^ s[x + 20];
         }
-        #pragma unroll
         for (int x = 0; x < 5; x++) {
             D[x] = C[(x + 4) % 5] ^ rotl64(C[(x + 1) % 5], 1);
         }
-        #pragma unroll
         for (int y = 0; y < 5; y++) {
-            #pragma unroll
             for (int x = 0; x < 5; x++) {
                 s[x + 5 * y] ^= D[x];
             }
@@ -116,10 +110,8 @@ __device__ void keccak_f1600(uint64_t s[25]) {
         B[19] = rotl64(s[23], 56);
         B[4]  = rotl64(s[24], 14);
 
-        #pragma unroll
         for (int y = 0; y < 5; y++) {
             int o = 5 * y;
-            #pragma unroll
             for (int x = 0; x < 5; x++) {
                 s[o + x] = B[o + x] ^ ((~B[o + ((x + 1) % 5)]) & B[o + ((x + 2) % 5)]);
             }
@@ -129,7 +121,6 @@ __device__ void keccak_f1600(uint64_t s[25]) {
 }
 
 __device__ __forceinline__ bool below_difficulty(const uint32_t h[8], const uint32_t d[8]) {
-    #pragma unroll
     for (int i = 0; i < 8; i++) {
         if (h[i] < d[i]) return true;
         if (h[i] > d[i]) return false;
@@ -152,7 +143,6 @@ __global__ void mine_kernel(
         if (result->found) return;
 
         uint64_t s[25];
-        #pragma unroll
         for (int i = 0; i < 25; i++) s[i] = 0;
 
         s[0] = load_le64(challenge + 0);
@@ -178,7 +168,6 @@ __global__ void mine_kernel(
         if (below_difficulty(h, difficulty)) {
             if (atomicCAS(&result->found, 0u, 1u) == 0u) {
                 result->nonce = nonce;
-                #pragma unroll
                 for (int i = 0; i < 8; i++) result->hash[i] = h[i];
             }
             return;

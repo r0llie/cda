@@ -1,7 +1,7 @@
 NVCC ?= nvcc
 
 CUDA_ARCH ?= sm_89
-CXXFLAGS ?= -O3 -std=c++17
+CXXFLAGS ?= -O2 -std=c++17
 
 all: cuda_miner
 
