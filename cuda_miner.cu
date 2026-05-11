@@ -181,7 +181,7 @@ __global__ void mine_kernel(
     #pragma unroll 1
     for (uint32_t k = 0; k < iters; k++, nonce++) {
         U64x s[25];
-        for (int i = 0; i < 25; i++) s[i] = 0;
+        for (int i = 0; i < 25; i++) s[i] = make_u64(0u, 0u);
 
         s[0] = make_u64(load_le32(challenge + 0), load_le32(challenge + 4));
         s[1] = make_u64(load_le32(challenge + 8), load_le32(challenge + 12));
